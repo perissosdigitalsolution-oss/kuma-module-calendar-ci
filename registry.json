@@ -3,7 +3,7 @@
     {
       "id": "kuma-module-calendar-ci",
       "name": "Official School Calendar (Côte d'Ivoire)",
-      "version": "1.0.1",
+      "version": "1.0.2",
       "category": "academic",
       "country": "CI",
       "target": "primary",

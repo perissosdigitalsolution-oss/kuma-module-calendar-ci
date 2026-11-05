@@ -283,7 +283,7 @@ export function createCalendarModule() {
         return c.json({
             module: 'kuma-module-calendar-ci',
             apiVersion: 'v1',
-            version: '1.0.1',
+            version: '1.0.2',
             status,
             capabilities: ['bridge-import', 'today-status', 'upcoming-events'],
             supportedYears,

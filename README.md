@@ -1,6 +1,6 @@
 # KUMA Module — Official School Calendar (Côte d'Ivoire) 🇨🇮
 
-**Version 1.0.1 · API v1 · Bridge Mode for existing UI**
+**Version 1.0.2 · API v1 · Bridge Mode for existing UI**
 
 Gives any KUMA/KSP school the official Ivorian primary-school calendar: the 3 trimestres, the school breaks (congés), the evaluation schedule for both tracks
 (CP1→CM1 and CM2 with the national **CEPE** exam), and the public holidays
