@@ -263,12 +263,19 @@ export function createCalendarModule() {
     });
 
     // ── GET /v1/health — unauthenticated capability probe ───────────────────
+    // A health probe must NEVER 500: on a fresh install the module-owned
+    // tables (mod_calendar_*) do not exist yet (schema.sql not applied).
+    // Same graceful-degradation contract as the sibling modules.
     app.get('/v1/health', async (c: ModContext) => {
-        const db = c.env.DB;
-        const yearRow = await db.prepare(`
-            SELECT label, start_date, end_date FROM mod_calendar_years
-            WHERE country = 'Côte d''Ivoire' ORDER BY start_date DESC LIMIT 1
-        `).first<{ label: string; start_date: string; end_date: string }>();
+        let yearRow: { label: string; start_date: string; end_date: string } | null = null;
+        try {
+            yearRow = await c.env.DB.prepare(`
+                SELECT label, start_date, end_date FROM mod_calendar_years
+                WHERE country = 'Côte d''Ivoire' ORDER BY start_date DESC LIMIT 1
+            `).first<{ label: string; start_date: string; end_date: string }>();
+        } catch (e) {
+            console.error('[calendar-module] health: module schema not ready:', e);
+        }
 
         const status = yearRow ? 'ok' : 'ready';
         const supportedYears = yearRow ? [yearRow.label] : [];
