@@ -34,7 +34,7 @@ const DICT = {
     fr: {
         title: 'Calendrier scolaire officiel',
         subtitle: 'Trimestres, congés, évaluations et jours fériés',
-        tabToday: "Aujourd'hui", tabTerms: 'Trimestres', tabEval: 'Évaluations', tabHolidays: 'Jours fériés', tabImport: 'Importer',
+        tabToday: "Aujourd'hui", tabYear: 'Vue annuelle', tabTerms: 'Trimestres', tabEval: 'Évaluations', tabHolidays: 'Jours fériés', tabImport: 'Importer',
         loading: 'Chargement…',
         notConfigured: 'Aucun calendrier officiel importé pour cette école.',
         todayIsSchoolDay: 'Jour de classe',
@@ -45,6 +45,7 @@ const DICT = {
         daysUntil: (n: number) => (n === 0 ? "aujourd'hui" : n === 1 ? 'demain' : `dans ${n} jours`),
         term: 'Trimestre', termStart: 'Début des cours', termEnd: 'Fin du trimestre',
         breakStart: 'Début des congés', evaluation: 'Évaluation', holiday: 'Férié',
+        breakNoun: 'Congé', eventsNoun: 'événements', yearBadge: 'Calendrier officiel intégré',
         trackCp1Cm1: 'CP1 → CM1', trackCm2: 'CM2 (CEPE)',
         kindComposition: 'Composition', kindExamenBlanc: 'Examen blanc', kindNational: 'Épreuve nationale',
         kindFixe: 'Fixe', kindVariable: 'Variable (religieux)',
@@ -61,7 +62,7 @@ const DICT = {
     en: {
         title: 'Official school calendar',
         subtitle: 'Terms, breaks, evaluations and public holidays',
-        tabToday: 'Today', tabTerms: 'Terms', tabEval: 'Evaluations', tabHolidays: 'Public holidays', tabImport: 'Import',
+        tabToday: 'Today', tabYear: 'Year view', tabTerms: 'Terms', tabEval: 'Evaluations', tabHolidays: 'Public holidays', tabImport: 'Import',
         loading: 'Loading…',
         notConfigured: 'No official calendar imported for this school yet.',
         todayIsSchoolDay: 'School day',
@@ -72,6 +73,7 @@ const DICT = {
         daysUntil: (n: number) => (n === 0 ? 'today' : n === 1 ? 'tomorrow' : `in ${n} days`),
         term: 'Term', termStart: 'Term starts', termEnd: 'Term ends',
         breakStart: 'Break starts', evaluation: 'Evaluation', holiday: 'Holiday',
+        breakNoun: 'Break', eventsNoun: 'events', yearBadge: 'Official calendar integrated',
         trackCp1Cm1: 'CP1 → CM1', trackCm2: 'CM2 (CEPE)',
         kindComposition: 'Composition', kindExamenBlanc: 'Mock exam', kindNational: 'National exam',
         kindFixe: 'Fixed', kindVariable: 'Variable (religious)',
@@ -92,17 +94,38 @@ const kindLabel = (t: ReturnType<typeof getDict>, kind: string) =>
 
 function getDict(lang: Lang) { return DICT[lang]; }
 
+// ---- Year calendar grid (same look as the host academic calendar view) ----
+// Self-contained on purpose: no host imports, pure Tailwind, own i18n.
+const YEAR_DAY_BG: Record<string, string> = {
+    holiday: 'bg-red-200/70 text-red-900 font-semibold',
+    exam: 'bg-purple-200/70 text-purple-900 font-semibold',
+    break: 'bg-amber-200/70 text-amber-900',
+    event: 'bg-slate-200/70 text-slate-700',
+};
+const YEAR_DOT: Record<string, string> = { holiday: 'bg-red-400', exam: 'bg-purple-400', break: 'bg-amber-400', event: 'bg-slate-400' };
+const YEAR_PRIORITY: Record<string, number> = { exam: 4, holiday: 3, break: 2, event: 0 };
+
+interface YearItem { id: string; title: string; type: 'term' | 'break' | 'exam' | 'holiday'; start: string; end: string; sub?: string }
+const yIso = (d: Date): string =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const yFromISO = (s: string): Date => {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+};
+
 export default function CalendarModuleView({ lang = 'fr', apiBase, getToken, userRole, embedded = false }: CalendarModuleViewProps) {
     const t = useMemo(() => getDict(lang), [lang]);
     const svc = useMemo(() => new CalendarService({ apiBase, getToken }), [apiBase, getToken]);
 
-    const [tab, setTab] = useState<'today' | 'terms' | 'eval' | 'holidays' | 'import'>('today');
+    const [tab, setTab] = useState<'today' | 'year' | 'terms' | 'eval' | 'holidays' | 'import'>('today');
     const [today, setToday] = useState<TodayPayload | null>(null);
     const [years, setYears] = useState<CalendarYearSummary[]>([]);
     const [detail, setDetail] = useState<CalendarYearDetail | null>(null);
     const [loading, setLoading] = useState(true);
     const [importing, setImporting] = useState(false);
     const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+    // Hover experience on the year grid (rich day tooltip).
+    const [yearHover, setYearHover] = useState<{ monthKey: string; iso: string; items: YearItem[]; x: number; y: number; below: boolean } | null>(null);
 
     const effectiveRole = useMemo(() => {
         if (userRole) return userRole.toLowerCase();
@@ -161,6 +184,161 @@ export default function CalendarModuleView({ lang = 'fr', apiBase, getToken, use
     const tabCls = (active: boolean) =>
         `px-3 py-1.5 rounded-xl text-sm font-semibold transition-colors cursor-pointer ${active ? 'bg-slate-800 text-white' : 'text-slate-600 hover:bg-slate-100'}`;
 
+    // ---- Year calendar grid: the whole official year at a glance, with smooth hover cards ----
+    const renderYearGrid = () => {
+        if (!detail) return null;
+        const locale = lang === 'en' ? 'en-GB' : 'fr-FR';
+        const weekdays = lang === 'en' ? ['Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa', 'Su'] : ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+        const typeLabel = (ty: YearItem['type']) =>
+            ty === 'term' ? t.term : ty === 'break' ? t.breakNoun : ty === 'exam' ? t.evaluation : t.holiday;
+
+        const items: YearItem[] = [
+            ...detail.terms.map((tm, i) => ({ id: `t${i}`, title: tm.label, type: 'term' as const, start: tm.start_date, end: tm.end_date })),
+            ...detail.breaks.map((b, i) => ({ id: `b${i}`, title: b.label, type: 'break' as const, start: b.start_date, end: b.end_date })),
+            ...detail.evaluations.map((e, i) => ({ id: `e${i}`, title: e.label, type: 'exam' as const, start: e.date, end: e.date, sub: e.track === 'cm2' ? t.trackCm2 : t.trackCp1Cm1 })),
+            ...detail.holidays.map((h, i) => ({ id: `h${i}`, title: h.label, type: 'holiday' as const, start: h.date, end: h.date, sub: h.kind === 'variable' ? t.kindVariable : t.kindFixe })),
+        ];
+        const starts = items.map((it) => it.start).sort();
+        const ends = items.map((it) => it.end).sort();
+        const months: { y: number; m: number }[] = [];
+        if (starts.length && ends.length) {
+            let [cy, cm] = starts[0].split('-').map(Number);
+            const [ly, lm] = ends[ends.length - 1].split('-').map(Number);
+            let guard = 0;
+            while ((cy < ly || (cy === ly && cm <= lm)) && guard < 18) {
+                months.push({ y: cy, m: cm - 1 });
+                guard++; cm++;
+                if (cm > 12) { cm = 1; cy++; }
+            }
+        }
+        const todayIso = yIso(new Date());
+        const fmtShort = (s: string) => yFromISO(s).toLocaleDateString(locale, { day: 'numeric', month: 'short' });
+
+        return (
+            <div className="space-y-4">
+                <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-sm font-bold text-slate-700">{detail.year.label}</span>
+                    <span className="text-[11px] text-slate-400">{items.length} {t.eventsNoun}</span>
+                    <span className="inline-flex items-center gap-1 rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-[11px] text-emerald-700">
+                        <CheckCircle2 size={12} /> {t.yearBadge}
+                    </span>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {months.map((mo) => {
+                        const monthKey = `${mo.y}-${mo.m}`;
+                        const firstDow = (new Date(mo.y, mo.m, 1).getDay() + 6) % 7;
+                        const dim = new Date(mo.y, mo.m + 1, 0).getDate();
+                        const monthStart = `${mo.y}-${String(mo.m + 1).padStart(2, '0')}-01`;
+                        const monthEnd = `${mo.y}-${String(mo.m + 1).padStart(2, '0')}-${String(dim).padStart(2, '0')}`;
+                        const marks = new Map<string, string>();
+                        const dayItems = new Map<string, YearItem[]>();
+                        for (const it of items) {
+                            if (it.type === 'term') continue; // terms render as range lines
+                            let [cy, cm, cd] = it.start.split('-').map(Number);
+                            const [ey, em, ed] = it.end.split('-').map(Number);
+                            const cur = new Date(cy, cm - 1, cd);
+                            const last = new Date(ey, em - 1, ed);
+                            let guard = 0;
+                            while (cur <= last && guard < 62) {
+                                const iso = yIso(cur);
+                                const prev = marks.get(iso);
+                                if (!prev || (YEAR_PRIORITY[it.type] || 0) > (YEAR_PRIORITY[prev] || 0)) marks.set(iso, it.type);
+                                const arr = dayItems.get(iso) || [];
+                                arr.push(it);
+                                dayItems.set(iso, arr);
+                                cur.setDate(cur.getDate() + 1);
+                                guard++;
+                            }
+                        }
+                        const cells: (number | null)[] = [];
+                        for (let i = 0; i < firstDow; i++) cells.push(null);
+                        for (let d = 1; d <= dim; d++) cells.push(d);
+                        const monthTerms = items.filter((it) => it.type === 'term' && it.start <= monthEnd && it.end >= monthStart);
+                        const monthName = new Date(mo.y, mo.m, 1).toLocaleDateString(locale, { month: 'long' });
+                        const monthNameCap = monthName.charAt(0).toUpperCase() + monthName.slice(1);
+                        const showTip = yearHover && yearHover.monthKey === monthKey && yearHover.iso;
+                        const tipDate = showTip ? yFromISO(yearHover!.iso).toLocaleDateString(locale, { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' }) : '';
+                        return (
+                            <div key={monthKey} className="rounded-2xl border border-slate-100 bg-white p-3 shadow-sm">
+                                <p className="mb-1.5 text-xs font-semibold text-slate-700">{monthNameCap}</p>
+                                <div className="mb-0.5 grid grid-cols-7 gap-[2px]">
+                                    {weekdays.map((wd, i) => <div key={`${wd}-${i}`} className="truncate text-center text-[10px] text-slate-400">{wd}</div>)}
+                                </div>
+                                <div
+                                    className="relative grid grid-cols-7 gap-[2px]"
+                                    onMouseLeave={() => setYearHover((h) => (h && h.monthKey === monthKey ? { ...h, iso: null } : h))}
+                                >
+                                    {cells.map((d, i) => {
+                                        const iso = d ? `${mo.y}-${String(mo.m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}` : '';
+                                        const ty = d ? marks.get(iso) : undefined;
+                                        const isToday = !!d && iso === todayIso;
+                                        const hasEvents = !!d && dayItems.has(iso);
+                                        return (
+                                            <div
+                                                key={i}
+                                                onMouseEnter={hasEvents ? (e) => {
+                                                    const cell = e.currentTarget as HTMLElement;
+                                                    const grid = cell.offsetParent as HTMLElement | null;
+                                                    const gw = grid ? grid.clientWidth : 240;
+                                                    const below = cell.offsetTop < 60;
+                                                    setYearHover({
+                                                        monthKey,
+                                                        iso,
+                                                        items: dayItems.get(iso) || [],
+                                                        x: Math.max(4, Math.min(cell.offsetLeft, gw - 232)),
+                                                        y: below ? cell.offsetTop + cell.offsetHeight + 6 : cell.offsetTop - 6,
+                                                        below,
+                                                    });
+                                                } : undefined}
+                                                className={`flex h-6 items-center justify-center rounded-sm text-[10px] leading-none transition-all duration-100 ${d ? (ty ? `${YEAR_DAY_BG[ty]} cursor-help hover:brightness-95` : 'text-slate-500 hover:bg-slate-50') : ''} ${isToday ? 'ring-1 ring-orange-500' : ''}`}
+                                            >
+                                                {d || ''}
+                                            </div>
+                                        );
+                                    })}
+                                    <div
+                                        aria-hidden="true"
+                                        className={`pointer-events-none absolute z-30 w-56 rounded-lg bg-slate-900/95 p-2.5 text-left shadow-xl ring-1 ring-black/20 transition-all duration-150 ${showTip ? 'visible opacity-100' : 'invisible opacity-0'}`}
+                                        style={{ left: showTip ? yearHover!.x : 0, top: showTip ? yearHover!.y : 0, transform: showTip && !yearHover!.below ? 'translateY(-100%)' : 'none' }}
+                                    >
+                                        {showTip && (
+                                            <>
+                                                <p className="text-[11px] font-semibold capitalize text-white">{tipDate}</p>
+                                                <div className="mt-1.5 space-y-1.5">
+                                                    {yearHover!.items.map((it) => (
+                                                        <div key={it.id} className="flex items-start gap-1.5">
+                                                            <span className={`mt-1 h-1.5 w-1.5 flex-shrink-0 rounded-full ${YEAR_DOT[it.type] || 'bg-slate-400'}`} />
+                                                            <div className="min-w-0">
+                                                                <p className="text-[11px] font-medium leading-tight text-white">{it.title}</p>
+                                                                <p className="text-[10px] leading-tight text-slate-300">
+                                                                    {it.sub ? `${typeLabel(it.type)} · ${it.sub}` : typeLabel(it.type)}{it.start !== it.end ? ` · ${fmtShort(it.start)} → ${fmtShort(it.end)}` : ''}
+                                                                </p>
+                                                            </div>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </>
+                                        )}
+                                    </div>
+                                </div>
+                                {monthTerms.length > 0 && (
+                                    <div className="mt-1.5 space-y-0.5">
+                                        {monthTerms.map((r) => (
+                                            <div key={r.id} className="flex items-center gap-1 text-[10px] text-slate-500" title={`${r.title}: ${r.start} → ${r.end}`}>
+                                                <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full bg-indigo-500" />
+                                                <span className="truncate">{r.title} · {fmtShort(r.start)}{r.end !== r.start ? ` → ${fmtShort(r.end)}` : ''}</span>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        );
+                    })}
+                </div>
+            </div>
+        );
+    };
+
     return (
         <div className="space-y-5 text-slate-800">
             {!embedded && (
@@ -175,6 +353,7 @@ export default function CalendarModuleView({ lang = 'fr', apiBase, getToken, use
 
             <div className="flex flex-wrap gap-2">
                 <button className={tabCls(tab === 'today')} onClick={() => setTab('today')}>{t.tabToday}</button>
+                <button className={tabCls(tab === 'year')} onClick={() => setTab('year')}>{t.tabYear}</button>
                 <button className={tabCls(tab === 'terms')} onClick={() => setTab('terms')}>{t.tabTerms}</button>
                 <button className={tabCls(tab === 'eval')} onClick={() => setTab('eval')}>{t.tabEval}</button>
                 <button className={tabCls(tab === 'holidays')} onClick={() => setTab('holidays')}>{t.tabHolidays}</button>
@@ -238,6 +417,8 @@ export default function CalendarModuleView({ lang = 'fr', apiBase, getToken, use
                 </div>
             ) : !detail ? (
                 <div className="rounded-2xl border border-slate-100 bg-white p-8 text-center text-sm text-slate-500">{t.notConfigured}</div>
+            ) : tab === 'year' ? (
+                renderYearGrid()
             ) : tab === 'terms' ? (
                 <div className="space-y-3">
                     {detail.terms.map((term) => (

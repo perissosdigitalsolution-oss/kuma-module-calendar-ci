@@ -58,7 +58,7 @@ export default OFFICIAL_CALENDAR_CI_2026_2027;
 if (args.has('--zip')) {
     const { execSync } = await import('node:child_process');
     const outName = `${manifest.id}-${manifest.version}.zip`;
-    execSync(`cd "${path.dirname(MODULE_ROOT)}" && zip -qr "${outName}" "${path.basename(MODULE_ROOT)}" -x "*/node_modules/*"`, { stdio: 'inherit' });
+    execSync(`rm -f "${path.dirname(MODULE_ROOT)}/${outName}" && cd "${path.dirname(MODULE_ROOT)}" && zip -qr "${outName}" "${path.basename(MODULE_ROOT)}" -x "*/node_modules/*" "*/.git/*" "*/.git" "*/__tests__/*" "*.zip" "*.DS_Store"`, { stdio: 'inherit' });
     console.log(`✓ ${path.join(path.dirname(MODULE_ROOT), outName)}`);
     process.exit(0);
 }
