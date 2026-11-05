@@ -62,7 +62,7 @@ export class CalendarService {
 
     constructor(config: CalendarServiceConfig = {}) {
         const defaultBase = (typeof window !== 'undefined' && !['localhost','127.0.0.1'].includes(window.location.hostname) && !window.location.hostname.startsWith('192.168.') && !window.location.hostname.startsWith('10.'))
-            ? `${WORKER_URL}/api/v1/modules/calendar`
+            ? `${import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/api\/v1$/, '') : 'https://kuma-school-backend-production.kumaschool88.workers.dev'}/api/v1/modules/calendar`
             : '/api/v1/modules/calendar';
         this.apiBase = (config.apiBase || defaultBase).replace(/\/$/, '');
         this.getToken = config.getToken || (() => {
