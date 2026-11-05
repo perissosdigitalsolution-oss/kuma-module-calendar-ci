@@ -61,7 +61,10 @@ export class CalendarService {
     private getToken: () => string | null;
 
     constructor(config: CalendarServiceConfig = {}) {
-        this.apiBase = (config.apiBase || '/api/v1/modules/calendar').replace(/\/$/, '');
+        const defaultBase = (typeof window !== 'undefined' && !['localhost','127.0.0.1'].includes(window.location.hostname) && !window.location.hostname.startsWith('192.168.') && !window.location.hostname.startsWith('10.'))
+            ? `${WORKER_URL}/api/v1/modules/calendar`
+            : '/api/v1/modules/calendar';
+        this.apiBase = (config.apiBase || defaultBase).replace(/\/$/, '');
         this.getToken = config.getToken || (() => {
             try { return localStorage.getItem(DEFAULT_TOKEN_KEY); } catch { return null; }
         });
