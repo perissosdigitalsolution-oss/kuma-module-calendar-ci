@@ -61,9 +61,30 @@ export class CalendarService {
     private getToken: () => string | null;
 
     constructor(config: CalendarServiceConfig = {}) {
-        const defaultBase = (typeof window !== 'undefined' && !['localhost','127.0.0.1'].includes(window.location.hostname) && !window.location.hostname.startsWith('192.168.') && !window.location.hostname.startsWith('10.'))
-            ? `${import.meta.env.VITE_API_URL ? import.meta.env.VITE_API_URL.replace(/\/api\/v1$/, '') : 'https://kuma-school-backend-production.kumaschool88.workers.dev'}/api/v1/modules/calendar`
-            : '/api/v1/modules/calendar';
+        // API base resolution — per-site correctness, NO foreign fallback:
+        //   1. an explicit apiBase (injected by the host) always wins
+        //   2. local proxy-served (localhost / LAN) → the local Worker (:8787),
+        //      because the module routes live on the Worker (the NestJS gateway
+        //      does not mount them)
+        //   3. VITE_API_URL (build-time, set per site) → absolute
+        //   4. otherwise → same-origin relative
+        // A module that WRITES (the official import) must never silently
+        // target another school's API: there is deliberately no hardcoded
+        // worker URL here.
+        const modulePath = '/api/v1/modules/calendar';
+        let defaultBase = modulePath;
+        if (typeof window !== 'undefined') {
+            const host = window.location.hostname;
+            const isProxyServed = host === 'localhost' || host === '127.0.0.1' || host === '::1'
+                || host.startsWith('192.168.') || host.startsWith('10.')
+                || /^172\.(1[6-9]|2\d|3[01])\./.test(host);
+            if (isProxyServed) {
+                defaultBase = `${window.location.protocol}//${host}:8787${modulePath}`;
+            } else {
+                const envBase = (import.meta.env.VITE_API_URL || '').replace(/\/api\/v1$/, '');
+                defaultBase = envBase ? `${envBase}${modulePath}` : modulePath;
+            }
+        }
         this.apiBase = (config.apiBase || defaultBase).replace(/\/$/, '');
         this.getToken = config.getToken || (() => {
             try { return localStorage.getItem(DEFAULT_TOKEN_KEY); } catch { return null; }
